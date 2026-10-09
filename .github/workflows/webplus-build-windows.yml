@@ -1,8 +1,14 @@
-# Webplus fork：建置 Windows 安裝檔（未簽章），上傳為 Actions artifact。
-# 步驟沿用上游 dev-channel-win-build.yml，但不發佈 release、不需要任何 secrets。
+# Webplus fork：main 更新時建置 Windows 安裝檔（未簽章），發佈到固定的 Release「windows-installer」。
+# Release 不會過期；每次建置會覆蓋舊的安裝檔並把 tag 移到新的 commit，所以永遠只保留一版。
+# 步驟沿用上游 dev-channel-win-build.yml，但不需要任何 secrets。
 name: Webplus Windows installer
 
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
   workflow_dispatch:
     inputs:
       ref:
@@ -17,11 +23,16 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
+# 只保留一版安裝檔，新的建置取代進行中的舊建置。
 concurrency:
-  group: webplus-build-windows-${{ inputs.ref }}
+  group: webplus-build-windows
   cancel-in-progress: true
+
+env:
+  RELEASE_TAG: windows-installer
+  ASSET_NAME: webplus-orca-windows-setup.exe
 
 jobs:
   build-win:
@@ -35,7 +46,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
       # pnpm 必須在 setup-node 之前，setup-node 才找得到 store。
@@ -92,18 +103,31 @@ jobs:
         run: |
           node config/scripts/ensure-native-runtime.mjs --runtime=electron
           ORCA_BUILD_COMMIT=$(git rev-parse HEAD) pnpm exec electron-builder --config config/electron-builder.config.cjs --win --publish never
+          cp dist/orca-windows-setup.exe "dist/$ASSET_NAME"
 
-      - name: Resolve artifact name
-        id: meta
+      # 先移動 tag、再覆蓋檔案，過程中 Release 一直有可下載的安裝檔。
+      - name: Publish to release
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          sha=$(git rev-parse HEAD)
+          short=$(git rev-parse --short HEAD)
           version=$(node -p "require('./package.json').version")
-          echo "name=webplus-orca-windows-${version}-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Upload installer
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ steps.meta.outputs.name }}
-          path: dist/orca-windows-setup.exe
-          if-no-files-found: error
-          retention-days: 90
+          title="Webplus Orca ${version}（Windows 安裝檔）"
+          notes=$(printf '%s\n\n%s\n\n%s\n' \
+            "Webplus.ORCA（正體中文）Windows 安裝檔。版本 ${version}，commit ${short}，建置時間 $(date -u '+%Y-%m-%d %H:%M UTC')。" \
+            "安裝檔沒有數位簽章，Windows 跳出「Windows 已保護您的電腦」時，點「其他資訊」›「仍要執行」。" \
+            "此 Release 只保留最新一版，main 更新後會自動覆蓋。")
+          if gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}" -f sha="$sha" -F force=true >/dev/null
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${RELEASE_TAG}" -f sha="$sha" >/dev/null
+          fi
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "dist/$ASSET_NAME" --clobber
+            gh release edit "$RELEASE_TAG" --title "$title" --notes "$notes" --latest
+          else
+            gh release create "$RELEASE_TAG" "dist/$ASSET_NAME" --verify-tag --title "$title" --notes "$notes" --latest
+          fi
+          echo "已發佈：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}" >> "$GITHUB_STEP_SUMMARY"

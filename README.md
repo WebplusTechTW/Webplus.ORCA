@@ -34,14 +34,12 @@ Orca 是一套 AI 代理協作工具：可以同時執行 Codex、Claude Code、
 
 ### 方法一：下載安裝檔（Windows）
 
-1. 登入 GitHub 後，開啟 [Actions › Webplus Windows installer](https://github.com/WebplusTechTW/Webplus.ORCA/actions/workflows/webplus-build-windows.yml)。
-2. 點最上面一筆有綠色勾勾 ✅ 的執行紀錄。
-3. 捲到頁面最下方的 **Artifacts**，點 `webplus-orca-windows-版本-編號` 下載 zip 檔。
-4. 解壓縮，執行裡面的 `orca-windows-setup.exe`。
-5. 安裝檔沒有數位簽章，Windows 會跳出「Windows 已保護您的電腦」，點 **其他資訊** › **仍要執行**。
-6. 開啟 Orca → **設定** → **外觀** → **語言** → 選 **中文（繁體）**。
+1. 下載安裝檔：<https://github.com/WebplusTechTW/Webplus.ORCA/releases/download/windows-installer/webplus-orca-windows-setup.exe>（也可以到 [Releases](https://github.com/WebplusTechTW/Webplus.ORCA/releases/tag/windows-installer) 頁面查看版本與建置時間）。
+2. 執行 `webplus-orca-windows-setup.exe`。
+3. 安裝檔沒有數位簽章，Windows 會跳出「Windows 已保護您的電腦」，點 **其他資訊** › **仍要執行**。
+4. 開啟 Orca → **設定** → **外觀** → **語言** → 選 **中文（繁體）**。
 
-> Artifact 只保留 90 天。要更新版本時，下載較新的執行紀錄中的安裝檔並重新安裝即可。
+> 這個連結永遠指向最新的一版，要更新時重新下載安裝即可。
 
 ### 方法二：自行建置
 
@@ -130,21 +128,32 @@ pnpm build:win
 
 一般使用者不需要看這一節。
 
+### 分支結構
+
+| 分支 | 內容 |
+| --- | --- |
+| `upstream/main` | 原作者 `stablyai/orca` 的 `main` 的原樣鏡像，不做任何修改 |
+| `zh-tw` | `upstream/main` ＋ 正體中文語系（產生腳本、修正表、`zh-TW.json`） |
+| `main` | 本專案的主分支：`zh-tw` ＋ 本專案自己的修改（README、Webplus workflow 等） |
+
+更新方向固定為 `upstream/main` → `zh-tw` → `main`。翻譯相關的修改請做在 `zh-tw`，本專案自己的修改請做在 `main`。
+
 ### 自動同步（GitHub Actions）
 
 [`webplus-upstream-sync.yml`](.github/workflows/webplus-upstream-sync.yml) 會在**每週一台灣時間 00:00**：
 
-1. 檢查原作者（`stablyai/orca`）的 `main` 有沒有新 commit，沒有就結束。
-2. 合併進來，並重新產生正體中文語系。
-3. 開一個 PR（或更新還沒合併的那一個）到 `main`。
-4. 用同步分支建置 Windows 安裝檔，上傳到該次執行的 Artifacts，可以在合併前先安裝測試。
+1. 把原作者最新的 `main` 更新到 `upstream/main`。
+2. 把 `upstream/main` 合併到 `zh-tw`，重新產生 `zh-TW.json` 後推送。
+3. 把 `zh-tw` 合併到 `main`。
+4. `main` 更新後，[`webplus-build-windows.yml`](.github/workflows/webplus-build-windows.yml) 會建置 Windows 安裝檔，覆蓋到 [windows-installer Release](https://github.com/WebplusTechTW/Webplus.ORCA/releases/tag/windows-installer)。這個 Release 只保留最新一版，也不會過期。
 
-合併後如果要建置 `main` 的安裝檔，到 **Actions** › **Webplus Windows installer** › **Run workflow**（分支保持 `main`）。
+注意事項：
 
-收到 PR 後，審核並以 **Create a merge commit** 合併。**不要用 Squash 或 Rebase**，否則上游的 commit 歷史會遺失，之後每次同步都會大量衝突。
-
-- 想立刻同步：到 **Actions** › **Webplus upstream sync** › **Run workflow**。
-- 目前組織設定不允許 GitHub Actions 建立 PR，所以 workflow 會推送 `webplus/upstream-sync` 分支，然後標示為失敗，並在執行結果附上「建立 PR」的連結，點連結即可建立 PR。要改成自動建立 PR，請組織管理員到 **Organization settings › Actions › General** 勾選 **Allow GitHub Actions to create and approve pull requests**，或在 repo 的 **Settings › Secrets and variables › Actions** 新增 `WEBPLUS_SYNC_TOKEN`（具 Pull requests 寫入權限的 token）。
+- 想立刻同步：到 **Actions** › **Webplus upstream sync** › **Run workflow**。想重新建置安裝檔：到 **Actions** › **Webplus Windows installer** › **Run workflow**。
+- **步驟 3 目前需要手動處理。**`main` 受組織規則保護（需要 PR 審核），workflow 沒有權限直接推送，會改成開一個 `zh-tw` → `main` 的 PR。組織目前也不允許 Actions 建立 PR，所以會在執行結果附上「建立 PR」的連結並標示為失敗。用連結建立 PR，並以 **Create a merge commit** 合併（**不要用 Squash 或 Rebase**）後，就會自動建置安裝檔。
+- 要讓步驟 3 也自動完成，二選一：
+  - 在 repo 的 **Settings › Secrets and variables › Actions** 新增 `WEBPLUS_SYNC_TOKEN`，值為有權限略過 `main` 保護規則的帳號的 token（需要 Contents、Pull requests 寫入權限）。
+  - 請組織管理員調整 `main` 的保護規則，允許 GitHub Actions 略過，或允許 Actions 建立 PR（**Organization settings › Actions › General › Allow GitHub Actions to create and approve pull requests**）。
 - 合併發生衝突時，workflow 會失敗並在執行結果列出衝突的檔案，請改用下面的手動方式處理。
 - workflow 也會停用從原專案帶進來的其他 workflow（它們需要原作者的主機與金鑰，在這裡無法執行）。
 
@@ -156,33 +165,44 @@ pnpm build:win
 git remote add upstream https://github.com/stablyai/orca.git
 git remote set-url --push upstream DISABLE   # 避免不小心 push 到原作者的 repo
 git config merge.ours.driver true            # 合併時保留本專案的 README
+git fetch origin
+git checkout -b zh-tw origin/zh-tw
 ```
 
 每次同步：
 
 ```bash
-git checkout main
-git pull origin main
+# 1. 更新 upstream/main 鏡像
 git fetch upstream
-git merge upstream/main
+git push origin refs/remotes/upstream/main:refs/heads/upstream/main
 
+# 2. 合併到 zh-tw 並重新產生正體中文
+git checkout zh-tw
+git pull origin zh-tw
+git merge upstream/main
 pnpm install
-pnpm run sync:localization-zh-tw   # 重新產生正體中文
+pnpm run sync:localization-zh-tw
 git add src/renderer/src/i18n/locales/zh-TW.json
 git commit -m "chore(i18n): 同步上游後重新產生 zh-TW 語系"   # 顯示 nothing to commit 時可略過
+git push origin zh-tw
+
+# 3. 合併到 main（main 受保護時，改到 GitHub 開 zh-tw → main 的 PR）
+git checkout main
+git pull origin main
+git merge --no-ff zh-tw
 git push origin main
 ```
 
 發生衝突時：
 
-- **README.md**：執行 `git checkout --ours README.md && git add README.md`，保留本專案版本。
-- **`locales/*.json` 的 `chineseTraditional` 那一行**：保留雙方內容，也就是上游的變更加上這一行。
+- **README.md**（合併到 `main` 時）：執行 `git checkout --ours README.md && git add README.md`，保留本專案版本。
+- **`locales/*.json` 的 `chineseTraditional` 那一行**（合併到 `zh-tw` 時）：保留雙方內容，也就是上游的變更加上這一行。
 - **`zh-TW.json`**：不要手動合併，執行 `pnpm run sync:localization-zh-tw` 重新產生。
 - 其他檔案：依一般 Git 衝突處理方式解決後執行 `git commit`。
 
 ## 調整正體中文翻譯
 
-覺得某個詞不夠台灣用語時，修改 [`config/scripts/locale-zh-tw-overrides.mjs`](config/scripts/locale-zh-tw-overrides.mjs)，再執行 `pnpm run sync:localization-zh-tw`。這個檔案有三種修正方式：
+請在 **`zh-tw` 分支**修改 [`config/scripts/locale-zh-tw-overrides.mjs`](config/scripts/locale-zh-tw-overrides.mjs)，執行 `pnpm run sync:localization-zh-tw` 後 commit 並推送 `zh-tw`，再合併到 `main`。這個檔案有三種修正方式：
 
 - `ZH_TW_TERM_OVERRIDES`：詞彙對照，依順序套用（例如 `['倉庫', '儲存庫']`）。較長的片語要放在它包含的通用詞前面。
 - `ZH_TW_CONTEXT_RULES`：依英文原文判斷翻譯（例如英文是 item 時用「項目」，是 project 時用「專案」）。

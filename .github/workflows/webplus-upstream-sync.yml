@@ -1,6 +1,6 @@
-# Webplus fork：每週合併 stablyai/orca 的 main，重新產生正體中文語系後開 PR。
-# main 受組織規則保護（需審核），所以這裡只開 PR，由人審核後以「Create a merge commit」合併。
-# 同步分支推送後，會接著建置 Windows 安裝檔（webplus-build-windows.yml）供合併前測試。
+# Webplus fork 每週同步流程：
+#   stablyai/orca main ─鏡像→ upstream/main ─合併＋重新產生 zh-TW→ zh-tw ─合併→ main ─建置→ Windows 安裝檔（Release）
+# main 受組織規則保護；沒有權限直接推送時，改提供 zh-tw → main 的 PR，合併後由 webplus-build-windows.yml 建置。
 name: Webplus upstream sync
 
 on:
@@ -24,21 +24,125 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
-      pushed: ${{ steps.push.outputs.pushed }}
+      main_pushed: ${{ steps.main.outputs.pushed }}
     env:
       GH_TOKEN: ${{ github.token }}
       UPSTREAM_URL: https://github.com/stablyai/orca.git
-      SYNC_BRANCH: webplus/upstream-sync
+      MIRROR_BRANCH: upstream/main
+      ZH_TW_BRANCH: zh-tw
       ZH_TW_CATALOG: src/renderer/src/i18n/locales/zh-TW.json
     steps:
-      - name: Checkout main
+      # 設定 WEBPLUS_SYNC_TOKEN（可略過 main 保護規則的 token）時，main 也能自動合併。
+      - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: main
           fetch-depth: 0
+          token: ${{ secrets.WEBPLUS_SYNC_TOKEN || github.token }}
+
+      - name: Configure git
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # 搭配 main 上 .gitattributes 的 README.md merge=ours，保留本專案 README。
+          git config merge.ours.driver true
+
+      - name: 更新 upstream/main（原作者版本的鏡像）
+        run: |
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch --no-tags upstream main
+          if [ "$(git rev-parse upstream/main)" = "$(git rev-parse "origin/$MIRROR_BRANCH")" ]; then
+            echo "- upstream/main 已是最新（$(git rev-parse --short upstream/main)）" >> "$GITHUB_STEP_SUMMARY"
+          else
+            git push --force origin "refs/remotes/upstream/main:refs/heads/$MIRROR_BRANCH"
+            echo "- upstream/main 更新為 $(git rev-parse --short upstream/main)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 合併 upstream/main 到 zh-tw
+        run: |
+          git checkout -B "$ZH_TW_BRANCH" "origin/$ZH_TW_BRANCH"
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "- zh-tw 已包含 upstream/main" >> "$GITHUB_STEP_SUMMARY"
+          elif ! git merge --no-ff --no-edit -m "chore: 合併上游 stablyai/orca main（$(git rev-parse --short upstream/main)）" upstream/main; then
+            {
+              echo "## upstream/main 合併到 zh-tw 發生衝突，需要手動處理"
+              echo '```'
+              git diff --name-only --diff-filter=U
+              echo '```'
+              echo "請依 README「手動同步」一節在本機合併。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            git merge --abort
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      # 產生腳本只需要 opencc-js，不必安裝整個專案的相依套件。
+      - name: 重新產生正體中文語系並推送 zh-tw
+        run: |
+          version=$(node -p "require('./package.json').devDependencies['opencc-js']")
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/opencc" "opencc-js@${version}"
+          mkdir -p node_modules
+          ln -s "$RUNNER_TEMP/opencc/node_modules/opencc-js" node_modules/opencc-js
+          node config/scripts/generate-zh-tw-catalog.mjs
+          node config/scripts/generate-zh-tw-catalog.mjs --check
+          rm node_modules/opencc-js
+          git add "$ZH_TW_CATALOG"
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(i18n): 同步上游後重新產生 zh-TW 語系"
+            echo "- zh-TW 語系已重新產生" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$ZH_TW_BRANCH")" ]; then
+            git push origin "$ZH_TW_BRANCH"
+            echo "- zh-tw 已推送 $(git rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 合併 zh-tw 到 main
+        id: main
+        run: |
+          git checkout -B main origin/main
+          if git merge-base --is-ancestor "$ZH_TW_BRANCH" HEAD; then
+            echo "- main 已包含 zh-tw，無需更新" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if ! git merge --no-ff --no-edit -m "chore: 合併 zh-tw（上游 $(git rev-parse --short upstream/main)）" "$ZH_TW_BRANCH"; then
+            {
+              echo "## zh-tw 合併到 main 發生衝突，需要手動處理"
+              echo '```'
+              git diff --name-only --diff-filter=U
+              echo '```'
+              echo "請依 README「手動同步」一節在本機合併。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            git merge --abort
+            exit 1
+          fi
+          if git push origin main; then
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+            echo "- main 已合併 zh-tw 並推送，接著建置安裝檔" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # 沒有權限直接推送 main：改用 PR，合併後 push 事件會觸發安裝檔建置。
+          body="自動同步：將 \`zh-tw\`（上游 $(git rev-parse --short upstream/main) ＋ 正體中文）合併到 \`main\`。請使用 **Create a merge commit** 合併，不要用 Squash 或 Rebase。合併後會自動建置 Windows 安裝檔。"
+          existing=$(gh pr list --head "$ZH_TW_BRANCH" --base main --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            echo "- main 無法直接推送，已有待合併的 PR #${existing}" >> "$GITHUB_STEP_SUMMARY"
+          elif gh pr create --base main --head "$ZH_TW_BRANCH" --title "同步上游並合併正體中文（$(git rev-parse --short upstream/main)）" --body "$body"; then
+            echo "- main 無法直接推送，已建立 PR" >> "$GITHUB_STEP_SUMMARY"
+          else
+            compare="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/main...${ZH_TW_BRANCH}?expand=1"
+            {
+              echo "## 需要手動合併 zh-tw 到 main"
+              echo
+              echo "main 受保護且無法自動建立 PR，請開啟以下連結建立 PR 並合併（Create a merge commit）：${compare}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       # 上游的 CI／部署／排程 workflow 在 fork 中沒有對應的 runner 與 secrets，合併進來的新 workflow 一律停用。
       - name: 停用上游帶來的 workflow
+        if: always()
         run: |
           gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows" \
             --jq '.workflows[]
@@ -51,106 +155,12 @@ jobs:
             gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/${id}/disable" || true
           done
 
-      - name: 取得上游
-        id: upstream
-        run: |
-          git remote add upstream "$UPSTREAM_URL"
-          git fetch --no-tags upstream main
-          if git merge-base --is-ancestor upstream/main HEAD; then
-            echo "已是最新，無需同步。" | tee -a "$GITHUB_STEP_SUMMARY"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "upstream_sha=$(git rev-parse --short upstream/main)" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: 合併上游
-        if: steps.upstream.outputs.changed == 'true'
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          # 搭配 .gitattributes 的 README.md merge=ours，保留本專案 README。
-          git config merge.ours.driver true
-          git checkout -B "$SYNC_BRANCH"
-          message="chore: 合併上游 stablyai/orca main（${{ steps.upstream.outputs.upstream_sha }}）"
-          if ! git merge --no-ff --no-edit -m "$message" upstream/main; then
-            {
-              echo "## 合併上游發生衝突，需要手動處理"
-              echo
-              echo '```'
-              git diff --name-only --diff-filter=U
-              echo '```'
-              echo
-              echo "請依 README「發生衝突時」一節在本機合併。"
-            } >> "$GITHUB_STEP_SUMMARY"
-            git merge --abort
-            exit 1
-          fi
-
-      - name: Setup Node
-        if: steps.upstream.outputs.changed == 'true'
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-
-      # 產生腳本只需要 opencc-js，不必安裝整個專案的相依套件。
-      - name: 重新產生正體中文語系
-        if: steps.upstream.outputs.changed == 'true'
-        run: |
-          version=$(node -p "require('./package.json').devDependencies['opencc-js']")
-          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/opencc" "opencc-js@${version}"
-          mkdir -p node_modules
-          ln -s "$RUNNER_TEMP/opencc/node_modules/opencc-js" node_modules/opencc-js
-          node config/scripts/generate-zh-tw-catalog.mjs
-          node config/scripts/generate-zh-tw-catalog.mjs --check
-          git add "$ZH_TW_CATALOG"
-          if git diff --cached --quiet; then
-            echo "zh-TW 語系無變動。" >> "$GITHUB_STEP_SUMMARY"
-          else
-            git commit -m "chore(i18n): 同步上游後重新產生 zh-TW 語系"
-            echo "zh-TW 語系已重新產生。" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      # 組織若禁止 GitHub Actions 建立 PR，可在 repo secrets 設定 WEBPLUS_SYNC_TOKEN（具 Pull requests 寫入權限的 token）。
-      - name: 推送並建立 PR
-        id: push
-        if: steps.upstream.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.WEBPLUS_SYNC_TOKEN || github.token }}
-        run: |
-          git push --force origin "$SYNC_BRANCH"
-          echo "pushed=true" >> "$GITHUB_OUTPUT"
-          title="同步上游 stablyai/orca（${{ steps.upstream.outputs.upstream_sha }}）"
-          body=$(cat <<'EOF'
-          自動合併 [stablyai/orca](https://github.com/stablyai/orca) 的 `main`，並重新產生正體中文語系（`zh-TW.json`）。
-
-          **請使用「Create a merge commit」合併，不要用 Squash 或 Rebase**，否則上游的 commit 歷史會遺失，之後每次同步都會產生大量衝突。
-
-          由 `.github/workflows/webplus-upstream-sync.yml` 每週一台灣時間 00:00 產生；PR 未合併前，之後的同步會更新這個 PR。
-          EOF
-          )
-          existing=$(gh pr list --head "$SYNC_BRANCH" --base main --state open --json number --jq '.[0].number')
-          if [ -n "$existing" ]; then
-            gh pr edit "$existing" --title "$title" --body "$body"
-            echo "已更新 PR #${existing}" >> "$GITHUB_STEP_SUMMARY"
-          elif gh pr create --base main --head "$SYNC_BRANCH" --title "$title" --body "$body"; then
-            echo "已建立 PR" >> "$GITHUB_STEP_SUMMARY"
-          else
-            compare="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/main...${SYNC_BRANCH}?expand=1"
-            {
-              echo "## 無法自動建立 PR"
-              echo
-              echo "同步分支 ${SYNC_BRANCH} 已推送，請手動建立 PR：${compare}"
-              echo
-              echo "要讓 workflow 自動建立 PR，請組織管理員到 Organization settings › Actions › General 勾選「Allow GitHub Actions to create and approve pull requests」，或在 repo secrets 設定 WEBPLUS_SYNC_TOKEN。"
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-
-  # 無法自動建立 PR 時 sync 會標示失敗，但分支已推送，仍要建置安裝檔。
+  # 以 GITHUB_TOKEN 推送不會觸發 push 事件，所以由這裡直接呼叫建置；重複觸發時建置 workflow 的 concurrency 只保留最新一次。
   build-windows:
     needs: sync
-    if: always() && needs.sync.outputs.pushed == 'true'
+    if: needs.sync.outputs.main_pushed == 'true'
+    permissions:
+      contents: write
     uses: ./.github/workflows/webplus-build-windows.yml
     with:
-      ref: webplus/upstream-sync
+      ref: main
