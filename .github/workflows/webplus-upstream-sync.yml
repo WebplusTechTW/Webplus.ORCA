@@ -108,8 +108,11 @@ jobs:
             echo "zh-TW 語系已重新產生。" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # 組織若禁止 GitHub Actions 建立 PR，可在 repo secrets 設定 WEBPLUS_SYNC_TOKEN（具 Pull requests 寫入權限的 token）。
       - name: 推送並建立 PR
         if: steps.upstream.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.WEBPLUS_SYNC_TOKEN || github.token }}
         run: |
           git push --force origin "$SYNC_BRANCH"
           title="同步上游 stablyai/orca（${{ steps.upstream.outputs.upstream_sha }}）"
@@ -125,7 +128,16 @@ jobs:
           if [ -n "$existing" ]; then
             gh pr edit "$existing" --title "$title" --body "$body"
             echo "已更新 PR #${existing}" >> "$GITHUB_STEP_SUMMARY"
-          else
-            gh pr create --base main --head "$SYNC_BRANCH" --title "$title" --body "$body"
+          elif gh pr create --base main --head "$SYNC_BRANCH" --title "$title" --body "$body"; then
             echo "已建立 PR" >> "$GITHUB_STEP_SUMMARY"
+          else
+            compare="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/main...${SYNC_BRANCH}?expand=1"
+            {
+              echo "## 無法自動建立 PR"
+              echo
+              echo "同步分支 ${SYNC_BRANCH} 已推送，請手動建立 PR：${compare}"
+              echo
+              echo "要讓 workflow 自動建立 PR，請組織管理員到 Organization settings › Actions › General 勾選「Allow GitHub Actions to create and approve pull requests」，或在 repo secrets 設定 WEBPLUS_SYNC_TOKEN。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi

@@ -120,6 +120,7 @@ pnpm build:win
 收到 PR 後，審核並以 **Create a merge commit** 合併。**不要用 Squash 或 Rebase**，否則上游的 commit 歷史會遺失，之後每次同步都會大量衝突。
 
 - 想立刻同步：到 **Actions** › **Webplus upstream sync** › **Run workflow**。
+- 目前組織設定不允許 GitHub Actions 建立 PR，所以 workflow 會推送 `webplus/upstream-sync` 分支，然後標示為失敗，並在執行結果附上「建立 PR」的連結，點連結即可建立 PR。要改成自動建立 PR，請組織管理員到 **Organization settings › Actions › General** 勾選 **Allow GitHub Actions to create and approve pull requests**，或在 repo 的 **Settings › Secrets and variables › Actions** 新增 `WEBPLUS_SYNC_TOKEN`（具 Pull requests 寫入權限的 token）。
 - 合併發生衝突時，workflow 會失敗並在執行結果列出衝突的檔案，請改用下面的手動方式處理。
 - workflow 也會停用從原專案帶進來的其他 workflow（它們需要原作者的主機與金鑰，在這裡無法執行）。
 
