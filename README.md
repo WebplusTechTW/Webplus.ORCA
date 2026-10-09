@@ -46,6 +46,9 @@ cd Webplus.ORCA
 git remote add upstream https://github.com/stablyai/orca.git
 git fetch upstream
 
+# 避免不小心 push 到原作者的 repo
+git remote set-url --push upstream DISABLE
+
 # 合併上游時保留本專案的 README（只需設定一次）
 git config merge.ours.driver true
 ```
