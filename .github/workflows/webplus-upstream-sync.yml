@@ -1,0 +1,131 @@
+# Webplus fork：每週合併 stablyai/orca 的 main，重新產生正體中文語系後開 PR。
+# main 受組織規則保護（需審核），所以這裡只開 PR，由人審核後以「Create a merge commit」合併。
+name: Webplus upstream sync
+
+on:
+  schedule:
+    # 台灣時間每週一 00:00（UTC 週日 16:00）
+    - cron: '0 16 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: webplus-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'WebplusTechTW/Webplus.ORCA'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM_URL: https://github.com/stablyai/orca.git
+      SYNC_BRANCH: webplus/upstream-sync
+      ZH_TW_CATALOG: src/renderer/src/i18n/locales/zh-TW.json
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # 上游的 CI／部署／排程 workflow 在 fork 中沒有對應的 runner 與 secrets，合併進來的新 workflow 一律停用。
+      - name: 停用上游帶來的 workflow
+        run: |
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows" \
+            --jq '.workflows[]
+              | select(.state == "active")
+              | select(.path | startswith(".github/workflows/"))
+              | select(.path | startswith(".github/workflows/webplus-") | not)
+              | "\(.id)\t\(.path)"' |
+          while IFS=$'\t' read -r id path; do
+            echo "停用 ${path}"
+            gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/${id}/disable" || true
+          done
+
+      - name: 取得上游
+        id: upstream
+        run: |
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch --no-tags upstream main
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "已是最新，無需同步。" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "upstream_sha=$(git rev-parse --short upstream/main)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 合併上游
+        if: steps.upstream.outputs.changed == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # 搭配 .gitattributes 的 README.md merge=ours，保留本專案 README。
+          git config merge.ours.driver true
+          git checkout -B "$SYNC_BRANCH"
+          message="chore: 合併上游 stablyai/orca main（${{ steps.upstream.outputs.upstream_sha }}）"
+          if ! git merge --no-ff --no-edit -m "$message" upstream/main; then
+            {
+              echo "## 合併上游發生衝突，需要手動處理"
+              echo
+              echo '```'
+              git diff --name-only --diff-filter=U
+              echo '```'
+              echo
+              echo "請依 README「發生衝突時」一節在本機合併。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            git merge --abort
+            exit 1
+          fi
+
+      - name: Setup Node
+        if: steps.upstream.outputs.changed == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      # 產生腳本只需要 opencc-js，不必安裝整個專案的相依套件。
+      - name: 重新產生正體中文語系
+        if: steps.upstream.outputs.changed == 'true'
+        run: |
+          version=$(node -p "require('./package.json').devDependencies['opencc-js']")
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/opencc" "opencc-js@${version}"
+          mkdir -p node_modules
+          ln -s "$RUNNER_TEMP/opencc/node_modules/opencc-js" node_modules/opencc-js
+          node config/scripts/generate-zh-tw-catalog.mjs
+          node config/scripts/generate-zh-tw-catalog.mjs --check
+          git add "$ZH_TW_CATALOG"
+          if git diff --cached --quiet; then
+            echo "zh-TW 語系無變動。" >> "$GITHUB_STEP_SUMMARY"
+          else
+            git commit -m "chore(i18n): 同步上游後重新產生 zh-TW 語系"
+            echo "zh-TW 語系已重新產生。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 推送並建立 PR
+        if: steps.upstream.outputs.changed == 'true'
+        run: |
+          git push --force origin "$SYNC_BRANCH"
+          title="同步上游 stablyai/orca（${{ steps.upstream.outputs.upstream_sha }}）"
+          body=$(cat <<'EOF'
+          自動合併 [stablyai/orca](https://github.com/stablyai/orca) 的 `main`，並重新產生正體中文語系（`zh-TW.json`）。
+
+          **請使用「Create a merge commit」合併，不要用 Squash 或 Rebase**，否則上游的 commit 歷史會遺失，之後每次同步都會產生大量衝突。
+
+          由 `.github/workflows/webplus-upstream-sync.yml` 每週一台灣時間 00:00 產生；PR 未合併前，之後的同步會更新這個 PR。
+          EOF
+          )
+          existing=$(gh pr list --head "$SYNC_BRANCH" --base main --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "$title" --body "$body"
+            echo "已更新 PR #${existing}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh pr create --base main --head "$SYNC_BRANCH" --title "$title" --body "$body"
+            echo "已建立 PR" >> "$GITHUB_STEP_SUMMARY"
+          fi
