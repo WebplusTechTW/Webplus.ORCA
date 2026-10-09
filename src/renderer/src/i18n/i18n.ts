@@ -29,7 +29,8 @@ const NON_DEFAULT_LOCALE_LOADERS: Record<
   fr: () => import('./locales/fr.json'),
   ja: () => import('./locales/ja.json'),
   ko: () => import('./locales/ko.json'),
-  zh: () => import('./locales/zh.json')
+  zh: () => import('./locales/zh.json'),
+  'zh-TW': () => import('./locales/zh-TW.json')
 }
 
 const lazyLocaleBackend: BackendModule = {
@@ -61,6 +62,8 @@ void i18n
     // i18next uses bundled `en` immediately and only hits the backend for the
     // languages that aren't already in memory.
     partialBundledLanguages: true,
+    // Why: zh-TW must fall back to English, not to the Simplified `zh` catalog.
+    load: 'currentOnly',
     resources: {
       en: {
         // Why the pruned catalog: every renderer string goes through

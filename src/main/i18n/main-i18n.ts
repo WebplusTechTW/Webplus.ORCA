@@ -28,7 +28,8 @@ const LAZY_LOCALE_LOADERS: Record<
   fr: () => import('../../renderer/src/i18n/locales/fr.json'),
   ja: () => import('../../renderer/src/i18n/locales/ja.json'),
   ko: () => import('../../renderer/src/i18n/locales/ko.json'),
-  zh: () => import('../../renderer/src/i18n/locales/zh.json')
+  zh: () => import('../../renderer/src/i18n/locales/zh.json'),
+  'zh-TW': () => import('../../renderer/src/i18n/locales/zh-TW.json')
 }
 
 const lazyLocaleBackend: BackendModule = {
@@ -66,6 +67,8 @@ export async function ensureMainI18n(): Promise<I18nInstance> {
       // process English strings come from translateMain() fallbacks, and
       // partialBundledLanguages lets the backend supply non-English catalogs.
       partialBundledLanguages: true,
+      // Why: zh-TW must fall back to English, not to the Simplified `zh` catalog.
+      load: 'currentOnly',
       resources: {
         en: {
           translation: {}
