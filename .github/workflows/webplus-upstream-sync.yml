@@ -39,6 +39,20 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.WEBPLUS_SYNC_TOKEN || github.token }}
 
+      # 上游的 CI／部署／排程 workflow 在 fork 中沒有對應的 runner 與 secrets，合併進來的新 workflow 一律停用。
+      - name: 停用上游帶來的 workflow
+        run: |
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows" \
+            --jq '.workflows[]
+              | select(.state == "active")
+              | select(.path | startswith(".github/workflows/"))
+              | select(.path | startswith(".github/workflows/webplus-") | not)
+              | "\(.id)\t\(.path)"' |
+          while IFS=$'\t' read -r id path; do
+            echo "停用 ${path}"
+            gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/${id}/disable" || true
+          done
+
       - name: Configure git
         run: |
           git config user.name 'github-actions[bot]'
@@ -141,24 +155,10 @@ jobs:
             echo "::warning title=需要手動合併 zh-tw 到 main::請建立 PR 並以 Create a merge commit 合併：${compare}"
           fi
 
-      # 上游的 CI／部署／排程 workflow 在 fork 中沒有對應的 runner 與 secrets，合併進來的新 workflow 一律停用。
-      - name: 停用上游帶來的 workflow
-        if: always()
-        run: |
-          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows" \
-            --jq '.workflows[]
-              | select(.state == "active")
-              | select(.path | startswith(".github/workflows/"))
-              | select(.path | startswith(".github/workflows/webplus-") | not)
-              | "\(.id)\t\(.path)"' |
-          while IFS=$'\t' read -r id path; do
-            echo "停用 ${path}"
-            gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/${id}/disable" || true
-          done
-
   # 以 GITHUB_TOKEN 推送不會觸發 push 事件，所以由這裡直接呼叫建置；重複觸發時建置 workflow 的 concurrency 只保留最新一次。
   build-windows:
     needs: sync
+    # needs 預設要求 sync 成功；sync 任一步驟失敗就不會建置。
     if: needs.sync.outputs.main_pushed == 'true'
     permissions:
       contents: write
