@@ -137,7 +137,8 @@ jobs:
               echo
               echo "main 受保護且無法自動建立 PR，請開啟以下連結建立 PR 並合併（Create a merge commit）：${compare}"
             } >> "$GITHUB_STEP_SUMMARY"
-            exit 1
+            # 這是預期中的待辦事項而非錯誤，以警告提示，不讓整個 run 失敗。
+            echo "::warning title=需要手動合併 zh-tw 到 main::請建立 PR 並以 Create a merge commit 合併：${compare}"
           fi
 
       # 上游的 CI／部署／排程 workflow 在 fork 中沒有對應的 runner 與 secrets，合併進來的新 workflow 一律停用。
