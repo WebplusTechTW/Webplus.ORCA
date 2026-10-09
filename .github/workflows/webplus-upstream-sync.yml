@@ -1,5 +1,6 @@
 # Webplus fork：每週合併 stablyai/orca 的 main，重新產生正體中文語系後開 PR。
 # main 受組織規則保護（需審核），所以這裡只開 PR，由人審核後以「Create a merge commit」合併。
+# 同步分支推送後，會接著建置 Windows 安裝檔（webplus-build-windows.yml）供合併前測試。
 name: Webplus upstream sync
 
 on:
@@ -22,6 +23,8 @@ jobs:
     if: github.repository == 'WebplusTechTW/Webplus.ORCA'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      pushed: ${{ steps.push.outputs.pushed }}
     env:
       GH_TOKEN: ${{ github.token }}
       UPSTREAM_URL: https://github.com/stablyai/orca.git
@@ -110,11 +113,13 @@ jobs:
 
       # 組織若禁止 GitHub Actions 建立 PR，可在 repo secrets 設定 WEBPLUS_SYNC_TOKEN（具 Pull requests 寫入權限的 token）。
       - name: 推送並建立 PR
+        id: push
         if: steps.upstream.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.WEBPLUS_SYNC_TOKEN || github.token }}
         run: |
           git push --force origin "$SYNC_BRANCH"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
           title="同步上游 stablyai/orca（${{ steps.upstream.outputs.upstream_sha }}）"
           body=$(cat <<'EOF'
           自動合併 [stablyai/orca](https://github.com/stablyai/orca) 的 `main`，並重新產生正體中文語系（`zh-TW.json`）。
@@ -141,3 +146,11 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+
+  # 無法自動建立 PR 時 sync 會標示失敗，但分支已推送，仍要建置安裝檔。
+  build-windows:
+    needs: sync
+    if: always() && needs.sync.outputs.pushed == 'true'
+    uses: ./.github/workflows/webplus-build-windows.yml
+    with:
+      ref: webplus/upstream-sync

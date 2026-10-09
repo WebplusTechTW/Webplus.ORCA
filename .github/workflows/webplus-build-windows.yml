@@ -1,0 +1,109 @@
+# Webplus fork：建置 Windows 安裝檔（未簽章），上傳為 Actions artifact。
+# 步驟沿用上游 dev-channel-win-build.yml，但不發佈 release、不需要任何 secrets。
+name: Webplus Windows installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 要建置的分支、tag 或 commit
+        required: true
+        default: main
+        type: string
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: webplus-build-windows-${{ inputs.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-win:
+    if: github.repository == 'WebplusTechTW/Webplus.ORCA'
+    # 與上游相同固定 windows-2022：windows-latest 的 VS 版本 node-gyp 偵測不到。
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      # pnpm 必須在 setup-node 之前，setup-node 才找得到 store。
+      - name: Setup pnpm
+        uses: pnpm/setup@v2
+        with:
+          install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            mobile/pnpm-lock.yaml
+
+      - name: Cache electron-builder downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: electron-builder-win-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            electron-builder-win-
+
+      # Electron 二進位檔下載偶爾 504，重試避免整個建置失敗。
+      - name: Install dependencies
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: pnpm install --frozen-lockfile
+
+      # electron-builder 打包前需要 mobile web bundle，它依賴 mobile/node_modules。
+      - uses: ./.github/actions/install-mobile-dependencies
+
+      - name: Build Windows process-table addon for the relay
+        shell: bash
+        run: |
+          node config/scripts/build-windows-process-tree-relay-addon.mjs --arch=x64
+          node config/scripts/build-windows-process-tree-relay-addon.mjs --arch=arm64
+
+      - name: Build app
+        shell: bash
+        run: pnpm build:release
+        env:
+          ORCA_REQUIRE_RELAY_NATIVE_ADDONS: 'x64,arm64'
+
+      - name: Package installer
+        shell: bash
+        run: |
+          node config/scripts/ensure-native-runtime.mjs --runtime=electron
+          ORCA_BUILD_COMMIT=$(git rev-parse HEAD) pnpm exec electron-builder --config config/electron-builder.config.cjs --win --publish never
+
+      - name: Resolve artifact name
+        id: meta
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "name=webplus-orca-windows-${version}-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.meta.outputs.name }}
+          path: dist/orca-windows-setup.exe
+          if-no-files-found: error
+          retention-days: 90

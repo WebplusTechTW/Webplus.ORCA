@@ -15,7 +15,7 @@ Orca 是一套 AI 代理協作工具：可以同時執行 Codex、Claude Code、
 ## 目錄
 
 - [與原專案的差異](#與原專案的差異)
-- [安裝（從這個 repo 自行建置）](#安裝從這個-repo-自行建置)
+- [安裝](#安裝)
 - [維護者：同步原作者的更新](#維護者同步原作者的更新)
 - [調整正體中文翻譯](#調整正體中文翻譯)
 
@@ -24,15 +24,30 @@ Orca 是一套 AI 代理協作工具：可以同時執行 Codex、Claude Code、
 - **正體中文介面**：設定 › 外觀 › 語言 選「中文（繁體）」。系統語言為繁體中文（台灣、香港、澳門）時會自動套用。
 - **翻譯自動產生**：`zh-TW.json` 由原專案的簡體翻譯轉換成台灣用語產生，原作者更新翻譯時，這裡也會跟著更新。
 
-## 安裝（從這個 repo 自行建置）
+## 安裝
 
-本 repo **沒有提供現成的安裝檔**，需要下載原始碼後自己建置。以下以 **Windows** 為例，macOS／Linux 的差異列在最後。
+有兩種方式：**方法一**直接下載建置好的 Windows 安裝檔（建議）；**方法二**下載原始碼自己建置（macOS／Linux 只能用這個方式）。
 
 > ⚠️ 自行建置的版本與官方 Orca 使用相同的應用程式識別碼，**安裝後會取代電腦上已安裝的官方 Orca**。
 >
 > ⚠️ Orca 內出現「有新版本」的更新提示時**請不要安裝**，那是官方版本，安裝後正體中文會消失。請依下方「之後要更新版本」的方式更新。
 
-### 步驟 1：安裝必要工具（只需做一次）
+### 方法一：下載安裝檔（Windows）
+
+1. 登入 GitHub 後，開啟 [Actions › Webplus Windows installer](https://github.com/WebplusTechTW/Webplus.ORCA/actions/workflows/webplus-build-windows.yml)。
+2. 點最上面一筆有綠色勾勾 ✅ 的執行紀錄。
+3. 捲到頁面最下方的 **Artifacts**，點 `webplus-orca-windows-版本-編號` 下載 zip 檔。
+4. 解壓縮，執行裡面的 `orca-windows-setup.exe`。
+5. 安裝檔沒有數位簽章，Windows 會跳出「Windows 已保護您的電腦」，點 **其他資訊** › **仍要執行**。
+6. 開啟 Orca → **設定** → **外觀** → **語言** → 選 **中文（繁體）**。
+
+> Artifact 只保留 90 天。要更新版本時，下載較新的執行紀錄中的安裝檔並重新安裝即可。
+
+### 方法二：自行建置
+
+以下以 **Windows** 為例，macOS／Linux 的差異列在最後。
+
+#### 步驟 1：安裝必要工具（只需做一次）
 
 依序安裝下列工具，安裝時都使用預設選項即可：
 
@@ -56,7 +71,7 @@ pnpm --version     # 應為 12.x
 python --version
 ```
 
-### 步驟 2：下載原始碼
+#### 步驟 2：下載原始碼
 
 ```powershell
 cd D:\         # 換成你想放程式碼的資料夾
@@ -64,15 +79,18 @@ git clone https://github.com/WebplusTechTW/Webplus.ORCA.git
 cd Webplus.ORCA
 ```
 
-### 步驟 3：安裝相依套件
+#### 步驟 3：安裝相依套件
 
 ```powershell
 pnpm install
+cd mobile
+pnpm install
+cd ..
 ```
 
-第一次執行需要幾分鐘。若出現 `node-gyp` 或 `Python` 相關錯誤，代表步驟 1 的 Python 或 Visual Studio Build Tools 沒有裝好。
+`mobile` 資料夾是手機版的部分，打包桌面版時也需要它的相依套件。第一次執行需要幾分鐘。若出現 `node-gyp` 或 `Python` 相關錯誤，代表步驟 1 的 Python 或 Visual Studio Build Tools 沒有裝好。
 
-### 步驟 4：建置並安裝
+#### 步驟 4：建置並安裝
 
 ```powershell
 pnpm build:win
@@ -82,23 +100,26 @@ pnpm build:win
 
 > 只想先試用、不安裝的話，改執行 `pnpm dev`，會直接開啟 Orca（關閉指令視窗即結束）。
 
-### 步驟 5：切換成正體中文
+#### 步驟 5：切換成正體中文
 
 開啟 Orca → **設定** → **外觀** → **語言** → 選 **中文（繁體）**。
 
-### 之後要更新版本
+#### 之後要更新版本
 
 在 `Webplus.ORCA` 資料夾執行：
 
 ```powershell
 git pull
 pnpm install
+cd mobile
+pnpm install
+cd ..
 pnpm build:win
 ```
 
 再執行一次 `dist\orca-windows-setup.exe` 覆蓋安裝。
 
-### macOS／Linux 的差異
+#### macOS／Linux 的差異
 
 | | macOS | Linux |
 | --- | --- | --- |
@@ -116,6 +137,9 @@ pnpm build:win
 1. 檢查原作者（`stablyai/orca`）的 `main` 有沒有新 commit，沒有就結束。
 2. 合併進來，並重新產生正體中文語系。
 3. 開一個 PR（或更新還沒合併的那一個）到 `main`。
+4. 用同步分支建置 Windows 安裝檔，上傳到該次執行的 Artifacts，可以在合併前先安裝測試。
+
+合併後如果要建置 `main` 的安裝檔，到 **Actions** › **Webplus Windows installer** › **Run workflow**（分支保持 `main`）。
 
 收到 PR 後，審核並以 **Create a merge commit** 合併。**不要用 Squash 或 Rebase**，否則上游的 commit 歷史會遺失，之後每次同步都會大量衝突。
 
