@@ -1,6 +1,7 @@
-# Webplus fork：main 更新時建置 Windows 安裝檔（未簽章），發佈到固定的 Release「windows-installer」。
+# Webplus fork：main 更新時建置 Windows 安裝檔，發佈到固定的 Release「windows-installer」。
 # Release 不會過期；每次建置會覆蓋舊的安裝檔並把 tag 移到新的 commit，所以永遠只保留一版。
-# 步驟沿用上游 dev-channel-win-build.yml，但不需要任何 secrets。
+# 步驟沿用上游 dev-channel-win-build.yml。安裝檔用內部 WebplusCA 簽發的程式碼簽章憑證（CN=Webplus）簽章，
+# 憑證放在 secrets WIN_CSC_PFX_BASE64 / WIN_CSC_PASSWORD；沒設定時照舊產出未簽章的安裝檔。
 name: Webplus Windows installer
 
 on:
@@ -106,6 +107,35 @@ jobs:
           ORCA_BUILD_COMMIT=$(git rev-parse HEAD) pnpm exec electron-builder --config config/electron-builder.config.cjs --win --publish never
           cp dist/orca-windows-setup.exe "dist/$ASSET_NAME"
 
+      # 只簽外層安裝檔；加時間戳記，憑證到期後已簽的檔案仍有效。
+      # runner 不信任 WebplusCA，所以不跑 signtool verify，改檢查簽署者是否為預期的憑證。
+      - name: Sign installer
+        shell: pwsh
+        env:
+          WIN_CSC_PFX_BASE64: ${{ secrets.WIN_CSC_PFX_BASE64 }}
+          WIN_CSC_PASSWORD: ${{ secrets.WIN_CSC_PASSWORD }}
+        run: |
+          if (-not $env:WIN_CSC_PFX_BASE64) {
+            Write-Warning '未設定 WIN_CSC_PFX_BASE64，安裝檔不簽章'
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WIN_CSC_PFX_BASE64))
+          try {
+            $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' |
+              Sort-Object FullName -Descending | Select-Object -First 1
+            if (-not $signtool) { throw '找不到 signtool.exe' }
+            $target = "dist\$env:ASSET_NAME"
+            & $signtool.FullName sign /f $pfx /p $env:WIN_CSC_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $target
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $signer = (Get-AuthenticodeSignature $target).SignerCertificate
+            if (-not $signer) { throw '簽章後讀不到簽署者憑證' }
+            Write-Host "已簽章：$($signer.Subject)（有效至 $($signer.NotAfter.ToString('yyyy-MM-dd'))）"
+            "INSTALLER_SIGNED=1" >> $env:GITHUB_ENV
+          } finally {
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          }
+
       # 先移動 tag、再覆蓋檔案，過程中 Release 一直有可下載的安裝檔。
       - name: Publish to release
         shell: bash
@@ -116,9 +146,14 @@ jobs:
           short=$(git rev-parse --short HEAD)
           version=$(node -p "require('./package.json').version")
           title="Webplus Orca ${version}（Windows 安裝檔）"
+          if [ "${INSTALLER_SIGNED:-}" = "1" ]; then
+            sign_note="安裝檔已用公司憑證簽章（發行者 Webplus）。建議用 \`gh release download ${RELEASE_TAG} -R ${GITHUB_REPOSITORY} -p '*.exe'\` 下載，不會跳出「Windows 已保護您的電腦」；用瀏覽器下載若仍跳出，點「其他資訊」確認發行者為 Webplus 後按「仍要執行」。"
+          else
+            sign_note="安裝檔沒有數位簽章，Windows 跳出「Windows 已保護您的電腦」時，點「其他資訊」›「仍要執行」。"
+          fi
           notes=$(printf '%s\n\n%s\n\n%s\n' \
             "Webplus.ORCA（正體中文）Windows 安裝檔。版本 ${version}，commit ${short}，建置時間 $(date -u '+%Y-%m-%d %H:%M UTC')。" \
-            "安裝檔沒有數位簽章，Windows 跳出「Windows 已保護您的電腦」時，點「其他資訊」›「仍要執行」。" \
+            "$sign_note" \
             "此 Release 只保留最新一版，main 更新後會自動覆蓋。")
           if gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
             gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}" -f sha="$sha" -F force=true >/dev/null
